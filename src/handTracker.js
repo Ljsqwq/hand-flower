@@ -1,7 +1,7 @@
-const VISION_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
-const WASM_PATH = `${VISION_CDN}/wasm`;
-const MODEL_PATH =
-  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+// 运行时和模型都 vendor 在项目里，断网也能跑
+const VISION_BUNDLE = new URL('../vendor/mediapipe/vision_bundle.mjs', import.meta.url).href;
+const WASM_PATH = new URL('../vendor/mediapipe/wasm', import.meta.url).href;
+const MODEL_PATH = new URL('../vendor/models/hand_landmarker.task', import.meta.url).href;
 
 // 21 点骨架连接关系
 export const HAND_CONNECTIONS = [
@@ -113,7 +113,7 @@ export class HandTracker {
   }
 
   async #startLandmarker() {
-    const mod = await import(/* @vite-ignore */ `${VISION_CDN}/vision_bundle.mjs`);
+    const mod = await import(/* @vite-ignore */ VISION_BUNDLE);
     const fileset = await mod.FilesetResolver.forVisionTasks(WASM_PATH);
     this.landmarker = await mod.HandLandmarker.createFromOptions(fileset, {
       baseOptions: { modelAssetPath: MODEL_PATH, delegate: 'GPU' },

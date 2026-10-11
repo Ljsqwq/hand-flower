@@ -18,7 +18,11 @@ node scripts/serve.mjs --port=8899   # 换端口
 
 **必须通过 `http://localhost:端口` 或 `https://` 访问。** 直接双击 `index.html` 用 `file://` 打开，浏览器不会给摄像头权限。
 
-首屏需要联网从 CDN 拉 three.js 与 MediaPipe（约 15MB），网络不通会停在启动页并给重试按钮。
+依赖已经 vendor 进仓库（`vendor/`），**不需要联网，也不需要 `npm install`**，断网照样跑：
+
+- `vendor/three/` — three.js 0.160 的 module 与用到的 addons（后处理、着色器）
+- `vendor/mediapipe/` — tasks-vision 0.10.14 的运行时与 wasm
+- `vendor/models/hand_landmarker.task` — 手部关键点模型
 
 ## 交互
 
@@ -72,7 +76,7 @@ node scripts/serve.mjs --port=8899   # 换端口
 ## 已知限制
 
 - 强逆光、手离镜头太远、或手被遮挡时，关键点会跳，法阵会抖。
-- 首屏依赖 CDN，网络抽风就打不开（把 three.js 和 MediaPipe 下到项目里 vendor 化可以解决，还没做）。
+- vendor 目录约 28MB，克隆仓库会大一些。
 - 集显上全屏后处理和大量粒子可能掉帧。真掉帧就先降 `src/starfield.js` 的 `count`，或把 bloom 换成半分辨率。
 
 ## 调试
