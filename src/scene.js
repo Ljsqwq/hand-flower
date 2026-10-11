@@ -3,16 +3,20 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { createFlower } from './flower.js';
+import { Mandala } from './mandala.js';
+import { Starfield } from './starfield.js';
+import { Beam } from './beam.js';
+import { Charge } from './charge.js';
 
 const DEG2RAD = Math.PI / 180;
-const MAX_TIPS = 10;
+// 法阵成型后蓄多久才发射
+const CHARGE_TIME = 1.0;
 
 /**
- * Three.js 舞台：一朵由 GLSL 粒子构成的花。
- * bloom = 0 是花苞，bloom = 1 完全绽放；指尖对附近的粒子产生斥力。
+ * Three.js 舞台：一层符文法阵。
+ * bloom = 0 握拳（淡金小圆环），bloom = 1 张开（完整法阵展开）。
  */
-export class FlowerScene {
+export class MandalaScene {
   constructor(canvas) {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -35,12 +39,25 @@ export class FlowerScene {
     this.#buildComposer();
 
     this.clock = new THREE.Clock();
-    this.handState = { bloom: 0, hands: [], primary: { x: 0.5, y: 0.5 } };
-    this.burst = 0;
+    this.handState = { bloom: 0, primary: { x: 0.5, y: 0.5 } };
+    // 手出现的平滑权重：没手时整座法阵不显示，手伸进来才「召唤」出来
+    this.presence = 0;
+    // 召唤序列：成型 → 聚能 → 发射
+    this.chargeT = 0;
+    this.wasFiring = false;
 
-    this.flower = createFlower();
-    this.flower.points.position.y = -0.1;
-    this.scene.add(this.flower.points);
+    this.mandala = new Mandala();
+    this.scene.add(this.mandala.group);
+
+    this.starfield = new Starfield();
+    this.scene.add(this.starfield.group);
+
+    this.beam = new Beam();
+    this.scene.add(this.beam.group);
+
+    this.charge = new Charge();
+    this.charge.group.rotation.x = -0.16; // 贴在法阵平面上
+    this.scene.add(this.charge.group);
 
     this.#updateVisiblePlane();
     this.resize();
@@ -51,7 +68,7 @@ export class FlowerScene {
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
 
-    // 阈值要卡在「单颗粒子亮度之上、叠加后的亮部之下」
+    // 阈值卡在符文线条亮度附近：太低整块发雾，太高法阵不发光
     this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.26, 0.2, 0.45);
     this.composer.addPass(this.bloomPass);
 
@@ -70,27 +87,7 @@ export class FlowerScene {
   setHandState(state) {
     if (!state) return;
     this.handState = state;
-
-    const { uniforms } = this.flower;
-    uniforms.uBloom.value = state.bloom;
-
-    // 绽放速度够快时触发一次迸发，随后指数衰减
-    const vel = state.bloomVelocity ?? 0;
-    if (vel > 0.55) this.burst = Math.min(1, this.burst + (vel - 0.55) * 0.9);
-
-    const tips = [];
-    for (const hand of state.hands ?? []) {
-      for (const tip of hand.tips) tips.push(tip);
-    }
-    const n = Math.min(tips.length, MAX_TIPS);
-    uniforms.uTipCount.value = n;
-    for (let i = 0; i < n; i++) {
-      uniforms.uTips.value[i].set(
-        (tips[i].x - 0.5) * 2 * this.halfW,
-        (0.5 - tips[i].y) * 2 * this.halfH,
-        0,
-      );
-    }
+    this.mandala.setBloom(state.bloom);
   }
 
   resize() {
@@ -101,27 +98,61 @@ export class FlowerScene {
     this.bloomPass.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.starfield.setPixelRatio(this.renderer.getPixelRatio());
+    this.charge.setPixelRatio(this.renderer.getPixelRatio());
     this.#updateVisiblePlane();
-    this.flower.uniforms.uPixelRatio.value = Math.min(devicePixelRatio, 2);
   }
 
   render() {
     const dt = Math.min(0.05, this.clock.getDelta());
     const t = this.clock.elapsedTime;
-    const { bloom, primary } = this.handState;
-    const { points, uniforms } = this.flower;
+    const { bloom, primary, handCount = 0 } = this.handState;
 
-    uniforms.uTime.value = t;
-    this.burst *= Math.exp(-4.5 * dt);
-    uniforms.uBurst.value = this.burst;
+    const wantPresence = handCount > 0 ? 1 : 0;
+    this.presence += (wantPresence - this.presence) * Math.min(1, dt * 4.2);
+    if (this.presence < 0.002) this.presence = 0;
+    this.mandala.setPresence(this.presence);
+    this.beam.setPresence(this.presence);
 
-    // 掌心带动整体轻微漂移，指尖靠近时花朵微微朝那边倾
+    // —— 召唤序列 ——
+    // 法阵基本成型并且手还在，才开始聚能；聚满一发，光柱射出去
+    const forming = bloom > 0.8 && this.presence > 0.5;
+    if (forming) this.chargeT = Math.min(CHARGE_TIME, this.chargeT + dt);
+    else this.chargeT = Math.max(0, this.chargeT - dt * 3);
+
+    const charge = this.chargeT / CHARGE_TIME;
+    const firing = this.chargeT >= CHARGE_TIME;
+    if (firing && !this.wasFiring) this.charge.fire();
+    this.wasFiring = firing;
+
+    this.beam.setPower(firing ? 1 : 0);
+    this.mandala.setSpinBoost(1 + 1.4 * charge);
+
+    this.mandala.update(dt, t);
+    this.beam.update(dt, t);
+    this.starfield.update(dt, t);
+    this.charge.update(dt, t, charge, this.presence);
+
+    // 掌心带着法阵漂移，但幅度压小：法阵是悬在那儿的，不该乱跑
+    const g = this.mandala.group;
     const tx = (primary.x - 0.5) * 2 * this.halfW * 0.22;
-    const ty = (0.5 - primary.y) * 2 * this.halfH * 0.22;
-    points.position.x += (tx - points.position.x) * 0.045;
-    points.position.y += (ty - 0.1 - points.position.y) * 0.045;
-    points.rotation.z = Math.sin(t * 0.22) * 0.05 + (primary.x - 0.5) * 0.22;
-    points.rotation.y = (0.5 - primary.y) * 0.3;
+    const ty = (0.5 - primary.y) * 2 * this.halfH * 0.16;
+    g.position.x += (tx - g.position.x) * 0.045;
+    g.position.y += (ty + 0.12 - g.position.y) * 0.045;
+    g.rotation.y = (primary.x - 0.5) * 0.16;
+    g.rotation.z = (0.5 - primary.y) * 0.1 + Math.sin(t * 0.2) * 0.02;
+
+    // 光柱只跟法阵的位置走，不吃法阵的旋转（它有自己的倾角）
+    this.beam.group.position.x = g.position.x;
+    this.beam.group.position.y = g.position.y;
+    this.beam.group.position.z = g.position.z;
+    // 柱体稍微倾一点，像是从法阵中心射出去，而不是贴在屏幕上的竖条
+    this.beam.group.rotation.x = this.beam.tilt;
+    this.beam.group.rotation.z = (0.5 - primary.y) * 0.05 + Math.sin(t * 0.2) * 0.01;
+
+    this.charge.group.position.x = g.position.x;
+    this.charge.group.position.y = g.position.y;
+    this.charge.group.position.z = g.position.z;
 
     this.composer.render(dt);
   }

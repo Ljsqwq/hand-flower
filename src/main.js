@@ -1,4 +1,4 @@
-import { FlowerScene } from './scene.js';
+import { MandalaScene } from './scene.js';
 import { HandTracker } from './handTracker.js';
 import { GestureMapper } from './gesture.js';
 
@@ -20,7 +20,7 @@ const el = {
   bloomBar: $('bloom-bar'),
 };
 
-const scene = new FlowerScene(el.stage);
+const scene = new MandalaScene(el.stage);
 const mapper = new GestureMapper();
 let hudStamp = 0;
 const CAMERA_KEY = 'hand-flower:cameraId';
@@ -82,7 +82,8 @@ if (forcedBloom !== null || forcedTips !== null) {
     scene.setHandState({
       bloom,
       hands: forcedTips ? [{ tips: forcedTips }] : [],
-      handCount: forcedTips ? 1 : 0,
+      // 调参模式没有手可识别，当作「有手」，否则法阵会被 presence 关掉
+      handCount: 1,
       primary: { x: 0.5, y: 0.5 },
     });
     requestAnimationFrame(still);
